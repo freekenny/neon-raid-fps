@@ -48,7 +48,6 @@ A fast-paced, high-fidelity 3D first-person shooter set in a neon cyberpunk grid
 * **Audio**: HTML5 Web Audio API Synth
 
 ---
-
 ## 🌐 Deploy to GitHub Pages (Play Online)
 To share this game online for free:
 1. Create a repository on GitHub and push your files.
