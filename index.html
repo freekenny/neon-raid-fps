@@ -1643,9 +1643,18 @@
         // Direction vectors for rotation
         const camDir = new THREE.Vector3();
         camera.getWorldDirection(camDir);
-        const angle = -Math.atan2(camDir.x, camDir.z); 
-        const cos = Math.cos(angle);
-        const sin = Math.sin(angle);
+        
+        // Normalize horizontal direction to avoid radar scaling when looking up/down
+        let dxDir = camDir.x;
+        let dzDir = camDir.z;
+        const len2d = Math.hypot(dxDir, dzDir);
+        if (len2d > 0.0001) {
+            dxDir /= len2d;
+            dzDir /= len2d;
+        } else {
+            dxDir = 0;
+            dzDir = -1; // Default looking forward
+        }
         
         // Player Triangle indicator (always center, facing up)
         mCtx.fillStyle = "#00f3ff";
@@ -1662,9 +1671,11 @@
             const dx = m.group.position.x - camera.position.x;
             const dz = m.group.position.z - camera.position.z;
             
-            // Map with yaw rotation
-            const rx = dx * cos - dz * sin;
-            const rz = dx * sin + dz * cos;
+            // Map with yaw rotation relative to player's heading
+            // Player forward vector: (dxDir, dzDir)
+            // Player right vector: (-dzDir, dxDir)
+            const rx = -dx * dzDir + dz * dxDir;
+            const rz = -(dx * dxDir + dz * dzDir);
             
             // Mapping scale
             const radarX = 85 + rx * 4.5;
