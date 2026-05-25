@@ -645,12 +645,68 @@
             right: 20%;
             text-align: right;
         }
+        
+        /* BOSS HEALTH BAR HUD */
+        #boss-hud {
+            position: absolute;
+            top: 25px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 450px;
+            background: var(--bg-dark);
+            border: 1px solid var(--magenta);
+            box-shadow: var(--border-glow-magenta);
+            border-radius: 6px;
+            padding: 10px 15px;
+            display: none;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 20;
+            backdrop-filter: blur(8px);
+            font-family: 'Share Tech Mono', monospace;
+        }
+        .boss-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--magenta);
+            text-shadow: var(--text-glow-magenta);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+        }
+        .boss-bar-container {
+            width: 100%;
+            height: 10px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 0, 127, 0.2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        #boss-bar-fill {
+            width: 100%;
+            height: 100%;
+            background: var(--magenta);
+            box-shadow: 0 0 10px var(--magenta);
+            transition: width 0.1s ease-out;
+        }
     </style>
 </head>
 <body>
 
 <div id="damage-flash"></div>
 <div class="grid-overlay"></div>
+
+<!-- BOSS HEALTH BAR HUD -->
+<div id="boss-hud">
+    <div class="boss-label">
+        <span id="boss-name">SECTOR LEADER // METALLIC TITAN</span>
+        <span id="boss-hp-text">HP: 15 / 15</span>
+    </div>
+    <div class="boss-bar-container">
+        <div id="boss-bar-fill"></div>
+    </div>
+</div>
 
 <!-- START SCREEN Overlay -->
 <div id="instructions">
@@ -669,7 +725,7 @@
             </div>
             <div class="control-item">
                 <span class="key long">SPACE</span>
-                <span class="desc">THRUST JUMP</span>
+                <span class="desc">JUMP / ADVANCE SECTOR</span>
             </div>
             <div class="control-item">
                 <span class="key">Q</span>
@@ -804,7 +860,7 @@
         <div class="shop-footer">
             <p>CURRENT BALANCE: <span id="shop-credits" class="glow-yellow">000000</span> CR</p>
             <button class="cyber-btn" onclick="closeShop()">RESUME MISSION</button>
-            <p class="hint">Press <b>ESC</b> or click button to advance to Sector <span id="next-lvl">2</span></p>
+            <p class="hint">Press <b>SPACE</b>, <b>ESC</b> or click button to advance to Sector <span id="next-lvl">2</span></p>
         </div>
     </div>
 </div>
@@ -998,6 +1054,48 @@
     let isMouseDown = false, isZoomed = false, fireCooldown = 0, velocityY = 0, canJump = true, lastHit = 0;
     let isGameOver = false, isLevelCleared = false;
     const scopeRaycaster = new THREE.Raycaster();
+    let floorHeights = [];
+
+    function getFloorHeight(px, pz) {
+        const gx = Math.round(px / 5);
+        const gz = Math.round(pz / 5);
+        
+        if (gz < 0 || gz >= 21 || gx < 0 || gx >= 21) return 0;
+        if (mazeLayout[gz] && mazeLayout[gz][gx] === 1) return 0;
+        
+        const cellHeightVal = floorHeights[gz] ? floorHeights[gz][gx] : 0;
+        if (typeof cellHeightVal === 'number') {
+            return cellHeightVal;
+        }
+        
+        if (typeof cellHeightVal === 'string' && cellHeightVal.startsWith('slope')) {
+            const parts = cellHeightVal.split('_'); // e.g. ['slope', 'east', '1.5']
+            const dir = parts[1];
+            const maxH = parseFloat(parts[2]) || 3.0;
+            
+            const x_center = gx * 5;
+            const z_center = gz * 5;
+            
+            if (dir === 'east') {
+                const t = (px - (x_center - 2.5)) / 5.0;
+                return Math.max(0, Math.min(maxH, t * maxH));
+            }
+            if (dir === 'west') {
+                const t = (px - (x_center - 2.5)) / 5.0;
+                return Math.max(0, Math.min(maxH, (1.0 - t) * maxH));
+            }
+            if (dir === 'south') {
+                const t = (pz - (z_center - 2.5)) / 5.0;
+                return Math.max(0, Math.min(maxH, t * maxH));
+            }
+            if (dir === 'north') {
+                const t = (pz - (z_center - 2.5)) / 5.0;
+                return Math.max(0, Math.min(maxH, (1.0 - t) * maxH));
+            }
+        }
+        
+        return 0;
+    }
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x050508); // Dark space background
@@ -1252,14 +1350,21 @@
             let sx, sz;
             do { sx = Math.floor(Math.random()*19)+1; sz = Math.floor(Math.random()*19)+1; } 
             while(mazeLayout[sz][sx] === 1);
-            this.group.position.set(sx*5, 0, sz*5);
+            const initFloorY = getFloorHeight(sx*5, sz*5);
+            this.group.position.set(sx*5, initFloorY, sz*5);
             this.hp = 3; this.walkCycle = Math.random() * 100; this.fireTimer = Math.random()*100;
             scene.add(this.group);
         }
         update() {
             const dir = new THREE.Vector3().subVectors(camera.position, this.group.position).normalize();
+            dir.y = 0;
+            dir.normalize();
             this.group.position.add(dir.multiplyScalar(0.045));
-            this.group.lookAt(camera.position.x, 0, camera.position.z);
+            
+            const bFloorY = getFloorHeight(this.group.position.x, this.group.position.z);
+            this.group.position.y = bFloorY;
+            
+            this.group.lookAt(camera.position.x, this.group.position.y, camera.position.z);
             
             // Dynamic Core Pulsing
             const pulse = 1 + Math.sin(Date.now() * 0.01) * 0.15;
@@ -1294,6 +1399,65 @@
         }
     }
 
+    class Boss extends Beast {
+        constructor() {
+            super();
+            this.hp = 10 + level * 5;
+            this.maxHp = this.hp;
+            this.isBoss = true;
+            this.group.scale.setScalar(2.0);
+            
+            const bossEyeMat = new THREE.MeshBasicMaterial({ color: 0x00ff66 });
+            this.group.traverse(child => {
+                if (child.isMesh && child.material && child.material.color && child.material.color.getHex() === 0xff0055) {
+                    child.material = bossEyeMat;
+                }
+            });
+            
+            this.group.position.set(10 * 5, getFloorHeight(10 * 5, 10 * 5), 10 * 5);
+            this.fireTimer = 0;
+        }
+        update() {
+            if (isGameOver) return;
+            const dir = new THREE.Vector3().subVectors(camera.position, this.group.position).normalize();
+            dir.y = 0;
+            dir.normalize();
+            this.group.position.add(dir.multiplyScalar(0.03));
+            
+            const bFloorY = getFloorHeight(this.group.position.x, this.group.position.z);
+            this.group.position.y = bFloorY;
+            this.group.lookAt(camera.position.x, this.group.position.y, camera.position.z);
+            
+            const pulse = 1 + Math.sin(Date.now() * 0.01) * 0.15;
+            this.core.scale.setScalar(pulse);
+            
+            this.walkCycle += 0.08;
+            this.legs.forEach(leg => {
+                const legSyncPhase = leg.offset.sideSign * leg.offset.frontSign;
+                const phase = this.walkCycle + (legSyncPhase > 0 ? 0 : Math.PI);
+                const swing = Math.sin(phase) * 0.35;
+                const lift = Math.cos(phase) * 0.15;
+                leg.thigh.rotation.x = swing;
+                leg.knee.rotation.x = -swing * 0.6 + Math.abs(lift);
+            });
+            
+            this.fireTimer++;
+            if(this.fireTimer > 110) {
+                const sDir = new THREE.Vector3().subVectors(camera.position, this.group.position).normalize();
+                const leftDir = sDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.4);
+                const rightDir = sDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.4);
+                
+                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0)), sDir, 'boss'));
+                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0)), leftDir, 'boss'));
+                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0)), rightDir, 'boss'));
+                
+                this.fireTimer = 0;
+                sfx.playEnemyShoot();
+            }
+            if(this.group.position.distanceTo(camera.position) < 2.5) triggerDamage();
+        }
+    }
+
     class Projectile {
         constructor(pos, dir, type) {
             this.type = type;
@@ -1313,6 +1477,10 @@
                 radius = 0.04;
                 color = 0xffea00; // Neon yellow
                 speed = 2.5; // Hyper-speed
+            } else if (type === 'boss') {
+                radius = 0.35;
+                color = 0x00ff66; // Glowing green
+                speed = 0.18;
             }
             
             this.mesh = new THREE.Mesh(
@@ -1322,7 +1490,7 @@
             this.mesh.name = "projectile";
             this.mesh.position.copy(pos);
             
-            if (type !== 'enemy') {
+            if (type !== 'enemy' && type !== 'boss') {
                 // Offset below camera like muzzle
                 this.mesh.position.y -= 0.15;
             }
@@ -1339,6 +1507,12 @@
             const gx = Math.round(this.mesh.position.x / 5);
             const gz = Math.round(this.mesh.position.z / 5);
             if (mazeLayout[gz] && mazeLayout[gz][gx] === 1) {
+                this.life = 0;
+            }
+            
+            // 3D Terrain Collision Check
+            const terrainY = getFloorHeight(this.mesh.position.x, this.mesh.position.z);
+            if (this.mesh.position.y < terrainY) {
                 this.life = 0;
             }
             
@@ -1529,6 +1703,18 @@
         // Update Game Over values just in case
         document.getElementById('final-lvl').innerText = String(level).padStart(2, '0');
         document.getElementById('final-score').innerText = String(score).padStart(6, '0');
+        
+        // Boss Health Bar UI update
+        const boss = monsters.find(m => m.isBoss);
+        const bossHud = document.getElementById('boss-hud');
+        if (boss) {
+            bossHud.style.display = 'flex';
+            document.getElementById('boss-name').innerText = `SECTOR LEADER // METALLIC TITAN [LVL ${level}]`;
+            document.getElementById('boss-hp-text').innerText = `HP: ${boss.hp} / ${boss.maxHp}`;
+            document.getElementById('boss-bar-fill').style.width = `${(boss.hp / boss.maxHp) * 100}%`;
+        } else {
+            bossHud.style.display = 'none';
+        }
     }
 
     function buildLevel() {
@@ -1554,6 +1740,59 @@
         
         mazeLayout = generateMaze(21, 21);
         
+        // Initialize floorHeights grid
+        floorHeights = Array.from({length: 21}, () => Array(21).fill(0));
+        
+        // 1. Central plateau: height 3.0 (grid 7..13)
+        for (let z = 7; z <= 13; z++) {
+            for (let x = 7; x <= 13; x++) {
+                if (mazeLayout[z][x] === 0) {
+                    floorHeights[z][x] = 3.0;
+                }
+            }
+        }
+        // Central slopes
+        for (let z = 7; z <= 13; z++) {
+            if (mazeLayout[z][6] === 0) floorHeights[z][6] = 'slope_east_3.0';
+            if (mazeLayout[z][14] === 0) floorHeights[z][14] = 'slope_west_3.0';
+        }
+        for (let x = 7; x <= 13; x++) {
+            if (mazeLayout[6][x] === 0) floorHeights[6][x] = 'slope_south_3.0';
+            if (mazeLayout[14][x] === 0) floorHeights[14][x] = 'slope_north_3.0';
+        }
+        
+        // 2. Top-Left plateau: height 1.5 (grid 2..5)
+        for (let z = 2; z <= 5; z++) {
+            for (let x = 2; x <= 5; x++) {
+                if (mazeLayout[z][x] === 0) {
+                    floorHeights[z][x] = 1.5;
+                }
+            }
+        }
+        // Top-Left slopes
+        for (let z = 2; z <= 5; z++) {
+            if (mazeLayout[z][6] === 0) floorHeights[z][6] = 'slope_west_1.5';
+        }
+        for (let x = 2; x <= 5; x++) {
+            if (mazeLayout[6][x] === 0) floorHeights[6][x] = 'slope_north_1.5';
+        }
+        
+        // 3. Bottom-Right plateau: height 1.5 (grid 15..18)
+        for (let z = 15; z <= 18; z++) {
+            for (let x = 15; x <= 18; x++) {
+                if (mazeLayout[z][x] === 0) {
+                    floorHeights[z][x] = 1.5;
+                }
+            }
+        }
+        // Bottom-Right slopes
+        for (let z = 15; z <= 18; z++) {
+            if (mazeLayout[z][14] === 0) floorHeights[z][14] = 'slope_east_1.5';
+        }
+        for (let x = 15; x <= 18; x++) {
+            if (mazeLayout[14][x] === 0) floorHeights[14][x] = 'slope_south_1.5';
+        }
+        
         // Reflective Arena Floor with Tiled Grid Texture
         const floorTex = createCyberFloorTexture();
         const floorMat = new THREE.MeshStandardMaterial({
@@ -1575,6 +1814,9 @@
             emissiveIntensity: 0.04
         });
         
+        const bandMat1 = new THREE.MeshBasicMaterial({ color: 0x00f3ff }); // glowing cyan
+        const bandMat2 = new THREE.MeshBasicMaterial({ color: 0xff007f }); // glowing magenta
+        
         mazeLayout.forEach((row, z) => row.forEach((cell, x) => {
             if(cell === 1) {
                 const wallGroup = new THREE.Group();
@@ -1584,9 +1826,6 @@
                 
                 // Add glowing neon composite bands around the blocks
                 const bandGeom = new THREE.BoxGeometry(5.05, 0.1, 5.05);
-                const bandMat1 = new THREE.MeshBasicMaterial({ color: 0x00f3ff });
-                const bandMat2 = new THREE.MeshBasicMaterial({ color: 0xff007f });
-                
                 const band1 = new THREE.Mesh(bandGeom, bandMat1);
                 band1.position.set(0, 2.5, 0);
                 wallGroup.add(band1);
@@ -1597,12 +1836,79 @@
                 
                 wallGroup.position.set(x*5, 0, z*5); 
                 scene.add(wallGroup);
+            } else {
+                // Render Cliff blocks or Sloped extruded wedges
+                const heightVal = floorHeights[z][x];
+                if (typeof heightVal === 'number' && heightVal > 0) {
+                    const cliffGroup = new THREE.Group();
+                    const mainCliff = new THREE.Mesh(new THREE.BoxGeometry(5, heightVal, 5), wallMat);
+                    mainCliff.position.set(0, heightVal / 2, 0); // goes from y=0 to y=heightVal
+                    cliffGroup.add(mainCliff);
+                    
+                    // Neon cyan trim on top edge of cliff
+                    const trimGeom = new THREE.BoxGeometry(5.05, 0.08, 5.05);
+                    const trim = new THREE.Mesh(trimGeom, bandMat1);
+                    trim.position.set(0, heightVal, 0);
+                    cliffGroup.add(trim);
+                    
+                    cliffGroup.position.set(x*5, 0, z*5);
+                    scene.add(cliffGroup);
+                } else if (typeof heightVal === 'string' && heightVal.startsWith('slope')) {
+                    const parts = heightVal.split('_');
+                    const dir = parts[1];
+                    const maxH = parseFloat(parts[2]) || 3.0;
+                    
+                    const slopeGroup = new THREE.Group();
+                    
+                    // Wedge right triangle profile rising to the East
+                    const shape = new THREE.Shape();
+                    shape.moveTo(-2.5, 0);
+                    shape.lineTo(2.5, maxH);
+                    shape.lineTo(2.5, 0);
+                    shape.closePath();
+                    
+                    const extrudeSettings = { depth: 5, bevelEnabled: false };
+                    const rampGeom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+                    rampGeom.translate(0, 0, -2.5); // Center the extrusion
+                    
+                    const ramp = new THREE.Mesh(rampGeom, wallMat);
+                    slopeGroup.add(ramp);
+                    
+                    // Add glowing neon magenta guide rails along the slope sides
+                    const slantLen = Math.sqrt(5 * 5 + maxH * maxH);
+                    const slantAngle = Math.atan2(maxH, 5.0);
+                    
+                    const railL = new THREE.Mesh(new THREE.BoxGeometry(slantLen, 0.08, 0.1), bandMat2);
+                    railL.position.set(0, maxH / 2, -2.4);
+                    railL.rotation.z = slantAngle;
+                    
+                    const railR = new THREE.Mesh(new THREE.BoxGeometry(slantLen, 0.08, 0.1), bandMat2);
+                    railR.position.set(0, maxH / 2, 2.4);
+                    railR.rotation.z = slantAngle;
+                    
+                    slopeGroup.add(railL, railR);
+                    
+                    // Apply rotation based on slope direction
+                    if (heightVal === 'slope_west') {
+                        slopeGroup.rotation.y = Math.PI;
+                    } else if (heightVal === 'slope_south') {
+                        slopeGroup.rotation.y = -Math.PI / 2;
+                    } else if (heightVal === 'slope_north') {
+                        slopeGroup.rotation.y = Math.PI / 2;
+                    }
+                    
+                    slopeGroup.position.set(x*5, 0, z*5);
+                    scene.add(slopeGroup);
+                }
             }
         }));
         
-        for(let i=0; i<4+level; i++) {
+        // Spawn normal beasts
+        for(let i=0; i<3+level; i++) {
             monsters.push(new Beast());
         }
+        // Spawn one boss
+        monsters.push(new Boss());
         
         camera.position.set(5, 1.8, 5);
         camera.rotation.set(0, 0, 0);
@@ -1613,9 +1919,31 @@
     window.addEventListener('keydown', e => { 
         if (isGameOver) return;
         keys[e.code] = true; 
-        if(e.code==='Space' && canJump && controls.isLocked) { 
-            velocityY = 0.22; 
-            canJump = false; 
+        if(e.code==='Space') {
+            if (controls.isLocked) {
+                if (canJump) {
+                    velocityY = 0.22; 
+                    canJump = false; 
+                }
+            } else {
+                e.preventDefault();
+                if(isLevelCleared) {
+                    closeShop();
+                } else {
+                    const instructions = document.getElementById('instructions');
+                    if (instructions && instructions.style.display === 'flex') {
+                        const h1 = instructions.querySelector('h1');
+                        if (h1) {
+                            const titleText = h1.innerText;
+                            if (titleText === "PAUSED") {
+                                controls.lock();
+                            } else if (titleText === "NEON RAID") {
+                                initializeInterface();
+                            }
+                        }
+                    }
+                }
+            }
         }
         if(e.code==='KeyQ' && controls.isLocked && ownedWeapons.length > 1) { 
             weaponIdx = ownedWeapons[(ownedWeapons.indexOf(weaponIdx) + 1) % ownedWeapons.length];
@@ -1685,11 +2013,13 @@
                 camera.position.z = prevZ; 
             }
 
-            // Jump gravity physics
+            // Jump gravity physics with 3D height awareness
+            const floorY = getFloorHeight(camera.position.x, camera.position.z);
             camera.position.y += velocityY; 
-            velocityY -= 0.01;
-            if(camera.position.y <= 1.8) { 
-                camera.position.y = 1.8; 
+            velocityY -= 0.012;
+            const targetY = floorY + 1.8;
+            if(camera.position.y <= targetY) { 
+                camera.position.y = targetY; 
                 velocityY = 0; 
                 canJump = true; 
             }
@@ -1729,14 +2059,18 @@
             playerProjectiles = playerProjectiles.filter(p => {
                 const a = p.update();
                 monsters.forEach((m, i) => {
-                    if(p.mesh.position.distanceTo(m.group.position) < 1.8) {
+                    const bodyCenter = m.group.position.clone().add(new THREE.Vector3(0, m.isBoss ? 2.0 : 1.0, 0));
+                    const hitRadius = m.isBoss ? 2.2 : 1.2;
+                    if(p.mesh.position.distanceTo(bodyCenter) < hitRadius) {
                         const dmg = p.type === 'sniper' ? 3 : 1;
                         m.hp -= dmg; p.life = 0;
+                        updateHUD();
                         if(m.hp<=0) { 
                             scene.remove(m.group); 
                             monsters.splice(i, 1); 
                             score += 150; 
                             sfx.playKill();
+                            updateHUD();
                         }
                     }
                 });
