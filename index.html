@@ -101,11 +101,12 @@
         /* HP BARS */
         #hp-bars {
             display: flex;
-            gap: 6px;
+            gap: 4px;
             margin-top: 6px;
+            width: 100%;
         }
         .hp-segment {
-            width: 28px;
+            flex: 1;
             height: 8px;
             background: rgba(255, 255, 255, 0.1);
             border: 1px solid rgba(255, 255, 255, 0.15);
@@ -380,8 +381,8 @@
             font-family: 'Orbitron', sans-serif;
         }
         .shop-content {
-            max-width: 800px;
-            width: 90%;
+            max-width: 1080px;
+            width: 95%;
             text-align: center;
             background: rgba(10, 10, 16, 0.85);
             border: 1px solid rgba(0, 243, 255, 0.2);
@@ -835,9 +836,27 @@
             <div class="shop-card" onclick="buy('med')">
                 <div class="card-tag">SYS.REPAIR</div>
                 <h3>HP CORE REGEN</h3>
-                <p class="desc">Restore 1 Integrity Core Segment (Max 5)</p>
+                <p class="desc">Restore 1 Integrity Core Segment (Up to Max)</p>
                 <div class="price-box">
                     <span class="cost">500</span> <span class="unit">CR</span>
+                </div>
+            </div>
+            <!-- Max HP Upgrade Card -->
+            <div id="shop-card-maxhp" class="shop-card" onclick="buy('maxhp')">
+                <div class="card-tag">SYS.EXTEND</div>
+                <h3>MAX HP UPGRADE</h3>
+                <p class="desc">Increase Max Integrity Core by 1 Segment</p>
+                <div class="price-box">
+                    <span class="cost">2500</span> <span class="unit">CR</span>
+                </div>
+            </div>
+            <!-- Damage Boost Card -->
+            <div id="shop-card-dmg" class="shop-card" onclick="buy('dmg')">
+                <div class="card-tag">MOD.STRENGTH</div>
+                <h3>DAMAGE BOOST</h3>
+                <p class="desc" id="shop-desc-dmg">Increase all system arms damage by +1 (Current: +0)</p>
+                <div class="price-box">
+                    <span class="cost">2500</span> <span class="unit">CR</span>
                 </div>
             </div>
             <!-- Rapid Fire Card -->
@@ -865,6 +884,15 @@
                 <p class="desc">Hyper-velocity railgun. Zoom with right click.</p>
                 <div class="price-box">
                     <span class="cost">2500</span> <span class="unit">CR</span>
+                </div>
+            </div>
+            <!-- Heavy Minigun Card -->
+            <div id="shop-card-minigun" class="shop-card" onclick="buy('minigun')">
+                <div class="card-tag">WEAPON.HEAVY</div>
+                <h3>HEAVY MINIGUN</h3>
+                <p class="desc">Rapid fire Gatling. One-shot standard enemies.</p>
+                <div class="price-box">
+                    <span class="cost">10000</span> <span class="unit">CR</span>
                 </div>
             </div>
         </div>
@@ -1059,8 +1087,8 @@
     const sfx = new SoundFX();
 
     // --- STATE ---
-    let level = 1, health = 5, score = 0, weaponIdx = 0;
-    let weapons = [{name:'PULSE RIFLE', rate:15}, {name:'ION BLASTER', rate:30}, {name:'SNIPER RIFLE', rate:50}];
+    let level = 1, health = 5, maxHealth = 5, score = 0, weaponIdx = 0, playerDmgBonus = 0;
+    let weapons = [{name:'PULSE RIFLE', rate:15}, {name:'ION BLASTER', rate:30}, {name:'SNIPER RIFLE', rate:50}, {name:'MINIGUN', rate:3}];
     let ownedWeapons = [0]; // Pulse Rifle owned initially
     let monsters = [], playerProjectiles = [], enemyProjectiles = [], mazeLayout = [];
     let isMouseDown = false, isZoomed = false, fireCooldown = 0, velocityY = 0, canJump = true, lastHit = 0;
@@ -1679,6 +1707,10 @@
                 radius = 0.15;
                 color = 0xffaa00; // Glowing orange
                 speed = 0.35; // Fast speed for bot duel
+            } else if (type === 'minigun') {
+                radius = 0.05;
+                color = 0xff3300; // Neon red-orange
+                speed = 2.0; // Fast speed
             }
             
             this.mesh = new THREE.Mesh(
@@ -1688,7 +1720,7 @@
             this.mesh.name = "projectile";
             this.mesh.position.copy(pos);
             
-            if (type === 'ak' || type === 'ion' || type === 'sniper') {
+            if (type === 'ak' || type === 'ion' || type === 'sniper' || type === 'minigun') {
                 // Offset below camera like muzzle
                 this.mesh.position.y -= 0.15;
             }
@@ -1748,8 +1780,19 @@
 
     window.buy = (item) => {
         if(item==='med' && score >= 500) { 
-            health = Math.min(5, health + 1); 
+            health = Math.min(maxHealth, health + 1); 
             score -= 500; 
+            sfx.playPurchase();
+        }
+        if(item==='maxhp' && score >= 2500) {
+            maxHealth++;
+            health++;
+            score -= 2500;
+            sfx.playPurchase();
+        }
+        if(item==='dmg' && score >= 2500) {
+            playerDmgBonus++;
+            score -= 2500;
             sfx.playPurchase();
         }
         if(item==='ak' && score >= 1500 && weapons[0].rate !== 8) { 
@@ -1769,6 +1812,12 @@
             score -= 2500; 
             sfx.playPurchase();
         }
+        if(item==='minigun' && score >= 10000 && !ownedWeapons.includes(3)) {
+            ownedWeapons.push(3);
+            weaponIdx = 3;
+            score -= 10000;
+            sfx.playPurchase();
+        }
         updateHUD();
         updateShopUI();
     };
@@ -1780,10 +1829,16 @@
     window.restartGame = () => {
         level = 1;
         health = 5;
+        maxHealth = 5;
+        playerDmgBonus = 0;
         score = 0;
         weaponIdx = 0;
         weapons[0].rate = 15;
-        ownedWeapons = [0];
+        if (gameMode === '1v1') {
+            ownedWeapons = [0, 1, 2];
+        } else {
+            ownedWeapons = [0];
+        }
         isGameOver = false;
         isLevelCleared = false;
         document.getElementById('gameover-overlay').style.display = 'none';
@@ -1820,6 +1875,19 @@
             sniperCard.classList.remove('owned');
             sniperCard.querySelector('.price-box').innerHTML = '<span class="cost">2500</span> <span class="unit">CR</span>';
         }
+        
+        const minigunCard = document.getElementById('shop-card-minigun');
+        if (ownedWeapons.includes(3)) {
+            minigunCard.classList.add('owned');
+            minigunCard.querySelector('.price-box').innerHTML = '<span class="cost" style="color: var(--magenta)">OWNED</span>';
+        } else {
+            minigunCard.classList.remove('owned');
+            minigunCard.querySelector('.price-box').innerHTML = '<span class="cost">10000</span> <span class="unit">CR</span>';
+        }
+
+        // Update repeatable descriptions
+        document.querySelector('#shop-card-maxhp .desc').innerText = `Increase Max Integrity Core by 1 Segment (Current Max: ${maxHealth})`;
+        document.getElementById('shop-desc-dmg').innerText = `Increase all system arms damage by +1 (Current: +${playerDmgBonus})`;
     }
 
     function drawRadar() {
@@ -1897,7 +1965,7 @@
         // HP Segments drawing
         const hpContainer = document.getElementById('hp-bars');
         hpContainer.innerHTML = '';
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < maxHealth; i++) {
             const segment = document.createElement('div');
             segment.className = 'hp-segment' + (i < health ? ' active' : '');
             hpContainer.appendChild(segment);
@@ -1907,8 +1975,13 @@
         document.getElementById('lvl').innerText = String(level).padStart(2, '0');
         
         const weaponName = weapons[weaponIdx].name;
-        const weaponIcon = weaponIdx === 2 ? '🔭 ' : (weaponIdx === 1 ? '🔥 ' : '⚡ ');
+        const weaponIcon = weaponIdx === 3 ? '🔫 ' : (weaponIdx === 2 ? '🔭 ' : (weaponIdx === 1 ? '🔥 ' : '⚡ '));
         document.getElementById('weapon-tag').innerText = weaponIcon + weaponName;
+        
+        const statusElement = document.querySelector('.weapon-status');
+        if (statusElement) {
+            statusElement.innerText = `READY // DMG +${playerDmgBonus}`;
+        }
         
         // Update Game Over values just in case
         document.getElementById('final-lvl').innerText = String(level).padStart(2, '0');
@@ -2282,6 +2355,7 @@
                 let pType = 'ak';
                 if (weaponIdx === 1) pType = 'ion';
                 else if (weaponIdx === 2) pType = 'sniper';
+                else if (weaponIdx === 3) pType = 'minigun';
                 
                 playerProjectiles.push(new Projectile(camera.position.clone(), d, pType));
                 fireCooldown = weapons[weaponIdx].rate;
@@ -2313,8 +2387,9 @@
                     const bodyCenter = m.group.position.clone().add(new THREE.Vector3(0, m.isBoss ? 2.0 : 1.0, 0));
                     const hitRadius = m.isBoss ? 2.2 : 1.2;
                     if(p.mesh.position.distanceTo(bodyCenter) < hitRadius) {
-                        const dmg = p.type === 'sniper' ? 3 : 1;
-                        m.hp -= dmg; p.life = 0;
+                        const baseDmg = (p.type === 'sniper' || p.type === 'minigun') ? 3 : 1;
+                        const finalDmg = baseDmg + playerDmgBonus;
+                        m.hp -= finalDmg; p.life = 0;
                         updateHUD();
                         if(m.hp<=0) { 
                             scene.remove(m.group); 
