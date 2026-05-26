@@ -343,6 +343,15 @@
             box-shadow: 0 0 25px var(--cyan);
             font-weight: 800;
         }
+        .cyber-btn.duel-btn {
+            border: 1px solid var(--magenta);
+            box-shadow: var(--border-glow-magenta);
+        }
+        .cyber-btn.duel-btn:hover {
+            background: var(--magenta);
+            color: #000;
+            box-shadow: 0 0 25px var(--magenta);
+        }
         .cyber-btn::before {
             content: '';
             position: absolute;
@@ -744,8 +753,11 @@
                 <span class="desc">ZOOM SCOPE (SNIPER)</span>
             </div>
         </div>
-        
-        <button class="cyber-btn" onclick="initializeInterface()">INITIALIZE SYSTEM</button>
+        <div id="start-buttons-container" style="display: flex; gap: 20px; justify-content: center; margin-top: 15px; flex-wrap: wrap;">
+            <button class="cyber-btn" onclick="initializeInterface('campaign')">INITIALIZE CAMPAIGN</button>
+            <button class="cyber-btn duel-btn" onclick="initializeInterface('1v1')">INITIALIZE 1v1 DUEL</button>
+        </div>
+        <button id="resume-btn" class="cyber-btn" onclick="resumeGame()" style="display: none; margin-top: 15px; width: 100%;">RESUME SYSTEM</button>
     </div>
 </div>
 
@@ -1053,6 +1065,8 @@
     let monsters = [], playerProjectiles = [], enemyProjectiles = [], mazeLayout = [];
     let isMouseDown = false, isZoomed = false, fireCooldown = 0, velocityY = 0, canJump = true, lastHit = 0;
     let isGameOver = false, isLevelCleared = false;
+    let gameMode = 'campaign';
+    let bossSpawned = false;
     const scopeRaycaster = new THREE.Raycaster();
     let floorHeights = [];
 
@@ -1109,8 +1123,22 @@
     const controls = new PointerLockControls(camera, document.body);
     
     // START INTERFACE TRIGGER
-    window.initializeInterface = () => {
+    window.initializeInterface = (mode) => {
         sfx.init();
+        if (mode) {
+            gameMode = mode;
+            if (gameMode === '1v1') {
+                ownedWeapons = [0, 1, 2];
+            } else {
+                ownedWeapons = [0];
+                weapons[0].rate = 15; // Reset pulse rifle rate
+            }
+            buildLevel();
+        }
+        controls.lock();
+    };
+
+    window.resumeGame = () => {
         controls.lock();
     };
 
@@ -1154,7 +1182,10 @@
             overlay.querySelector('h1').innerText = "PAUSED";
             overlay.querySelector('h1').setAttribute('data-text', "PAUSED");
             overlay.querySelector('.boot-terminal').innerText = "SYSTEM STANDBY... CONNECTIVITY RETAINED";
-            overlay.querySelector('.cyber-btn').innerText = "RESUME SYSTEM";
+            
+            // Adjust buttons for pause state
+            document.getElementById('start-buttons-container').style.display = 'none';
+            document.getElementById('resume-btn').style.display = 'block';
         }
     });
 
@@ -1389,9 +1420,9 @@
             
             this.fireTimer++;
             if(this.fireTimer > 150) {
-                const sDir = new THREE.Vector3().subVectors(camera.position, this.group.position).normalize();
-                // Spawn projectile from the top cannon instead of the base
-                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 1.38, 0)), sDir, 'enemy'));
+                const fireOrigin = this.group.position.clone().add(new THREE.Vector3(0, 1.38, 0));
+                const sDir = new THREE.Vector3().subVectors(camera.position, fireOrigin).normalize();
+                enemyProjectiles.push(new Projectile(fireOrigin, sDir, 'enemy'));
                 this.fireTimer = 0;
                 sfx.playEnemyShoot();
             }
@@ -1443,18 +1474,181 @@
             
             this.fireTimer++;
             if(this.fireTimer > 110) {
-                const sDir = new THREE.Vector3().subVectors(camera.position, this.group.position).normalize();
+                const fireOrigin = this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0));
+                const sDir = new THREE.Vector3().subVectors(camera.position, fireOrigin).normalize();
                 const leftDir = sDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), 0.4);
                 const rightDir = sDir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.4);
                 
-                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0)), sDir, 'boss'));
-                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0)), leftDir, 'boss'));
-                enemyProjectiles.push(new Projectile(this.group.position.clone().add(new THREE.Vector3(0, 2.76, 0)), rightDir, 'boss'));
+                enemyProjectiles.push(new Projectile(fireOrigin, sDir, 'boss'));
+                enemyProjectiles.push(new Projectile(fireOrigin, leftDir, 'boss'));
+                enemyProjectiles.push(new Projectile(fireOrigin, rightDir, 'boss'));
                 
                 this.fireTimer = 0;
                 sfx.playEnemyShoot();
             }
             if(this.group.position.distanceTo(camera.position) < 2.5) triggerDamage();
+        }
+    }
+
+    class Bot {
+        constructor() {
+            this.group = new THREE.Group();
+            this.isBot = true;
+            this.hp = 10 + level * 5;
+            this.maxHp = this.hp;
+            this.fireTimer = Math.random() * 40;
+            this.walkCycle = Math.random() * 100;
+            
+            // Materials
+            const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1a1a24, roughness: 0.35, metalness: 0.85 });
+            const visorMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 }); // Neon glowing orange visor
+            const frameMat = new THREE.MeshStandardMaterial({ color: 0x0a0a0f, roughness: 0.5, metalness: 0.9 });
+            
+            // 1. Sleek Torso Chassis
+            const torso = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.4), bodyMat);
+            torso.position.y = 0.9;
+            this.group.add(torso);
+            
+            // 2. Chest Core (Glowing orange plate)
+            const core = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.05), visorMat);
+            core.position.set(0, 1.0, 0.21);
+            this.group.add(core);
+            
+            // 3. Head
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), frameMat);
+            head.position.set(0, 1.45, 0);
+            this.group.add(head);
+            
+            // 4. Sleek glowing horizontal visor
+            const visor = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.06, 0.05), visorMat);
+            visor.position.set(0, 1.45, 0.14);
+            this.group.add(visor);
+            
+            // 5. Shoulder Pads
+            const shoulderL = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.25, 0.3), bodyMat);
+            shoulderL.position.set(-0.31, 1.1, 0);
+            const shoulderR = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.25, 0.3), bodyMat);
+            shoulderR.position.set(0.31, 1.1, 0);
+            this.group.add(shoulderL, shoulderR);
+            
+            // 6. Right Cyber-Rifle Arm
+            this.gunArm = new THREE.Group();
+            this.gunArm.position.set(0.38, 0.9, 0.1);
+            
+            // Arm link
+            const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.04, 0.4), frameMat);
+            arm.rotation.x = Math.PI / 2;
+            arm.position.set(0, 0, 0.15);
+            this.gunArm.add(arm);
+            
+            // Gun Barrel
+            const barrel = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.55), bodyMat);
+            barrel.position.set(0, -0.05, 0.45);
+            
+            // Glowing gun emitter
+            const emitter = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.1), visorMat);
+            emitter.rotation.x = Math.PI / 2;
+            emitter.position.set(0, -0.05, 0.73);
+            this.gunArm.add(barrel, emitter);
+            
+            this.group.add(this.gunArm);
+            
+            // 7. Hover Base (instead of legs)
+            const basePod = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.08, 0.3, 8), frameMat);
+            basePod.position.set(0, 0.4, 0);
+            this.group.add(basePod);
+            
+            // Thruster flame cone
+            this.flame = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.35, 4), visorMat);
+            this.flame.position.set(0, 0.18, 0);
+            this.flame.rotation.x = Math.PI;
+            this.group.add(this.flame);
+            
+            // Spawn positioning
+            let sx = 19, sz = 19;
+            while(mazeLayout[sz][sx] === 1) {
+                sx = Math.floor(Math.random()*19)+1;
+                sz = Math.floor(Math.random()*19)+1;
+            }
+            const initFloorY = getFloorHeight(sx * 5, sz * 5);
+            this.group.position.set(sx * 5, initFloorY, sz * 5);
+            
+            scene.add(this.group);
+        }
+        
+        update() {
+            if (isGameOver || isLevelCleared) return;
+            
+            const playerPos = camera.position.clone();
+            const dist = this.group.position.distanceTo(playerPos);
+            
+            // Look at player horizontally (body)
+            this.group.lookAt(playerPos.x, this.group.position.y, playerPos.z);
+            
+            // Gun points directly at the camera
+            const localTarget = this.gunArm.parent.worldToLocal(playerPos.clone());
+            this.gunArm.lookAt(localTarget);
+            
+            // Determine movement vector
+            const dir = new THREE.Vector3().subVectors(playerPos, this.group.position);
+            dir.y = 0;
+            dir.normalize();
+            
+            const speed = 0.055 + level * 0.005;
+            const moveStep = new THREE.Vector3(0, 0, 0);
+            
+            if (dist > 13) {
+                // Move towards player
+                moveStep.addScaledVector(dir, speed);
+            } else if (dist < 7) {
+                // Back up
+                moveStep.addScaledVector(dir, -speed * 0.85);
+            } else {
+                // Strafe dynamically around player
+                this.walkCycle += 0.06;
+                const right = new THREE.Vector3(-dir.z, 0, dir.x);
+                const strafeDir = Math.sin(this.walkCycle) > 0 ? right : right.clone().negate();
+                moveStep.addScaledVector(strafeDir, speed * 0.65);
+            }
+            
+            // Apply movement with wall collisions
+            const prevX = this.group.position.x;
+            const prevZ = this.group.position.z;
+            this.group.position.add(moveStep);
+            
+            const gx = Math.round(this.group.position.x / 5);
+            const gz = Math.round(this.group.position.z / 5);
+            if (mazeLayout[gz] && mazeLayout[gz][gx] === 1) {
+                this.group.position.x = prevX;
+                this.group.position.z = prevZ;
+            }
+            
+            // Floor Y alignment
+            const bFloorY = getFloorHeight(this.group.position.x, this.group.position.z);
+            this.group.position.y = bFloorY;
+            
+            // Pulsate engine flame
+            const pulse = 1 + Math.sin(Date.now() * 0.015) * 0.25;
+            this.flame.scale.set(pulse, pulse, pulse);
+            
+            // Shooting logic
+            this.fireTimer++;
+            const shootInterval = Math.max(35, 65 - level * 4);
+            if (this.fireTimer > shootInterval) {
+                const tipWorldPos = new THREE.Vector3();
+                this.gunArm.children[2].getWorldPosition(tipWorldPos); // Emit from muzzle emitter
+                
+                const sDir = new THREE.Vector3().subVectors(camera.position, tipWorldPos).normalize();
+                
+                enemyProjectiles.push(new Projectile(tipWorldPos, sDir, 'bot'));
+                this.fireTimer = 0;
+                sfx.playEnemyShoot();
+            }
+            
+            // Direct contact damage
+            if (this.group.position.distanceTo(camera.position) < 1.5) {
+                triggerDamage();
+            }
         }
     }
 
@@ -1481,6 +1675,10 @@
                 radius = 0.35;
                 color = 0x00ff66; // Glowing green
                 speed = 0.18;
+            } else if (type === 'bot') {
+                radius = 0.15;
+                color = 0xffaa00; // Glowing orange
+                speed = 0.35; // Fast speed for bot duel
             }
             
             this.mesh = new THREE.Mesh(
@@ -1490,7 +1688,7 @@
             this.mesh.name = "projectile";
             this.mesh.position.copy(pos);
             
-            if (type !== 'enemy' && type !== 'boss') {
+            if (type === 'ak' || type === 'ion' || type === 'sniper') {
                 // Offset below camera like muzzle
                 this.mesh.position.y -= 0.15;
             }
@@ -1683,9 +1881,10 @@
             
             const dist = Math.hypot(radarX - 85, radarY - 85);
             if (dist < 75) {
-                // Red hot glowing blips
-                mCtx.fillStyle = "#ff007f";
-                mCtx.shadowColor = "#ff007f"; mCtx.shadowBlur = 6;
+                // Different blip colors: bot = orange, boss = green, beast = magenta
+                const color = m.isBot ? "#ffaa00" : (m.isBoss ? "#00ff66" : "#ff007f");
+                mCtx.fillStyle = color;
+                mCtx.shadowColor = color; mCtx.shadowBlur = 6;
                 mCtx.beginPath();
                 mCtx.arc(radarX, radarY, 3.5, 0, Math.PI*2);
                 mCtx.fill();
@@ -1715,14 +1914,49 @@
         document.getElementById('final-lvl').innerText = String(level).padStart(2, '0');
         document.getElementById('final-score').innerText = String(score).padStart(6, '0');
         
-        // Boss Health Bar UI update
+        // Boss / Bot Health Bar UI update
         const boss = monsters.find(m => m.isBoss);
+        const bot = monsters.find(m => m.isBot);
         const bossHud = document.getElementById('boss-hud');
+        
         if (boss) {
             bossHud.style.display = 'flex';
+            bossHud.style.borderColor = 'var(--magenta)';
+            bossHud.style.boxShadow = 'var(--border-glow-magenta)';
+            
+            const label = bossHud.querySelector('.boss-label');
+            label.style.color = 'var(--magenta)';
+            label.style.textShadow = 'var(--text-glow-magenta)';
+            
+            const container = bossHud.querySelector('.boss-bar-container');
+            container.style.borderColor = 'rgba(255, 0, 127, 0.2)';
+            
             document.getElementById('boss-name').innerText = `SECTOR LEADER // METALLIC TITAN [LVL ${level}]`;
             document.getElementById('boss-hp-text').innerText = `HP: ${boss.hp} / ${boss.maxHp}`;
-            document.getElementById('boss-bar-fill').style.width = `${(boss.hp / boss.maxHp) * 100}%`;
+            
+            const barFill = document.getElementById('boss-bar-fill');
+            barFill.style.width = `${(boss.hp / boss.maxHp) * 100}%`;
+            barFill.style.backgroundColor = 'var(--magenta)';
+            barFill.style.boxShadow = '0 0 10px var(--magenta)';
+        } else if (bot) {
+            bossHud.style.display = 'flex';
+            bossHud.style.borderColor = 'var(--yellow)';
+            bossHud.style.boxShadow = '0 0 15px rgba(255, 183, 0, 0.4)';
+            
+            const label = bossHud.querySelector('.boss-label');
+            label.style.color = 'var(--yellow)';
+            label.style.textShadow = '0 0 8px rgba(255, 183, 0, 0.8)';
+            
+            const container = bossHud.querySelector('.boss-bar-container');
+            container.style.borderColor = 'rgba(255, 183, 0, 0.2)';
+            
+            document.getElementById('boss-name').innerText = `OPPONENT DROID // BOT-X${level}`;
+            document.getElementById('boss-hp-text').innerText = `HP: ${bot.hp} / ${bot.maxHp}`;
+            
+            const barFill = document.getElementById('boss-bar-fill');
+            barFill.style.width = `${(bot.hp / bot.maxHp) * 100}%`;
+            barFill.style.backgroundColor = 'var(--yellow)';
+            barFill.style.boxShadow = '0 0 10px var(--yellow)';
         } else {
             bossHud.style.display = 'none';
         }
@@ -1914,12 +2148,18 @@
             }
         }));
         
-        // Spawn normal beasts
-        for(let i=0; i<3+level; i++) {
-            monsters.push(new Beast());
+        // Reset spawning status
+        bossSpawned = false;
+        
+        if (gameMode === '1v1') {
+            // Spawn exactly one Bot
+            monsters.push(new Bot());
+        } else {
+            // Spawn normal beasts initially (Campaign mode)
+            for(let i=0; i<3+level; i++) {
+                monsters.push(new Beast());
+            }
         }
-        // Spawn one boss
-        monsters.push(new Boss());
         
         camera.position.set(5, 1.8, 5);
         camera.rotation.set(0, 0, 0);
@@ -2097,11 +2337,35 @@
                 return a;
             });
 
-            // Sector clear condition
-            if(monsters.length === 0) { 
-                isLevelCleared = true;
-                sfx.playLevelUp();
-                controls.unlock();
+            // Sector clear / enemy spawning logic
+            if (monsters.length === 0) {
+                if (gameMode === 'campaign' && !bossSpawned) {
+                    bossSpawned = true;
+                    monsters.push(new Boss());
+                    
+                    // Synthesize heavy boss alert tone
+                    if (sfx.ctx) {
+                        sfx.init();
+                        const now = sfx.ctx.currentTime;
+                        const osc = sfx.ctx.createOscillator();
+                        const gain = sfx.ctx.createGain();
+                        osc.connect(gain);
+                        gain.connect(sfx.ctx.destination);
+                        osc.type = 'sawtooth';
+                        osc.frequency.setValueAtTime(120, now);
+                        osc.frequency.exponentialRampToValueAtTime(300, now + 0.7);
+                        gain.gain.setValueAtTime(0.25, now);
+                        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.7);
+                        osc.start(now);
+                        osc.stop(now + 0.7);
+                    }
+                    
+                    updateHUD();
+                } else {
+                    isLevelCleared = true;
+                    sfx.playLevelUp();
+                    controls.unlock();
+                }
             }
         }
         renderer.render(scene, camera);
